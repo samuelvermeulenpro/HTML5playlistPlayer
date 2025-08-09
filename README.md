@@ -5,4 +5,4 @@
 - Ajoutez les fichiers medias dans le dossier que vous avez crèè et defini dans la configuration
 
 ## Exemple d'utilisation
-![Screenshot](screenshot.png)
+![Screenshot](Screenshot.png)
