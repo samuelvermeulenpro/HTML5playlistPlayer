@@ -1,0 +1,5 @@
+<?php
+
+$audio_dir="mp3/"; //Dossier media audio doit finir par /
+$page_title="Mon Player"; //Afficher dans la barre de titre du navigateur
+$player_title="🎵 Mon Player avec une superbe playlist"; //Afficher dans l’en-tete du player
