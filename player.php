@@ -1,193 +1,155 @@
 <?php
+declare(strict_types=1);
 
-//error_reporting(E_ALL);
-require_once __DIR__ . '/lib/getid3/getid3.php';
 require __DIR__ . '/conf/config.inc.php';
+require __DIR__ . '/lib/library.php';
 
-$directory = $audio_dir;
-$files = glob($directory . '*.mp3');
-$getID3 = new GetID3;
+$cfg = [
+    'audio_dir' => $audio_dir    ?? 'mp3/',
+    'audio_ext' => $audio_ext    ?? ['mp3', 'm4a', 'ogg', 'oga', 'opus', 'flac', 'wav'],
+    'sort_by'   => $sort_by      ?? 'filename',
+];
+$page_title   = $page_title   ?? 'Player';
+$player_title = $player_title ?? '🎵 Playlist';
 
-$tracks = [];
+$tracks = pl_library($cfg);
 
-foreach ($files as $file) {
-    $tags = $getID3->analyze($file);
-    getid3_lib::CopyTagsToComments($tags);
-
-    $title = $tags['comments_html']['title'][0] ?? basename($file);
-    $artist = $tags['comments_html']['artist'][0] ?? 'Artiste non-renseigné';
-    $album = $tags['comments_html']['album'][0] ?? 'Album non-renseigné';
-    $cover = null;
-
-    if (!empty($tags['id3v2']['APIC'][0]['data'])) {
-        $img_data = $tags['id3v2']['APIC'][0]['data'];
-        $mime = $tags['id3v2']['APIC'][0]['image_mime'];
-        $cover = 'data:' . $mime . ';base64,' . base64_encode($img_data);
-    }
-
-    $tracks[] = [
-        'file' => $file,
-        'title' => $title,
-        'artist' => $artist,
-	'album' => $album,
-        'cover' => $cover,
-    ];
+function h(?string $s): string
+{
+    return htmlspecialchars((string) $s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
-?>
 
+function fmt_time(float $sec): string
+{
+    $sec = (int) round($sec);
+    $hms = $sec >= 3600 ? sprintf('%d:%02d:%02d', intdiv($sec, 3600), intdiv($sec % 3600, 60), $sec % 60)
+                        : sprintf('%d:%02d', intdiv($sec, 60), $sec % 60);
+    return $hms;
+}
+
+$total = array_sum(array_column($tracks, 'duration'));
+$asset = static fn(string $f): string => 'assets/' . $f . '?v=' . @filemtime(__DIR__ . '/assets/' . $f);
+
+$json = json_encode(array_map(static fn($t) => [
+    'id'       => $t['id'],
+    'src'      => $t['src'],
+    'title'    => $t['title'],
+    'artist'   => $t['artist'],
+    'album'    => $t['album'],
+    'duration' => $t['duration'],
+    'cover'    => $t['cover'],
+], $tracks), JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+?>
 <!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= $page_title ?></title>
-    <link rel="stylesheet" href="assets/style.css" media="all">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title><?= h($page_title) ?></title>
+    <meta name="color-scheme" content="light dark">
+    <link rel="stylesheet" href="<?= h($asset('style.css')) ?>">
+    <script src="<?= h($asset('player.js')) ?>" defer></script>
 </head>
 <body>
-<div align="center">
-<h2><?= $player_title ?></h2>
-</div>
-<div id="audioContainer">
-<table border="0" width="100%">
-	<tr>
-		<td class="cover-player"><span id="trackcover"></span></td>
-		<td><h3><span id="trackinfo">Chargment des pistes, veuillez patienter...</h3></td>
-	</tr>
-</table>
-	<!-- Progress bar -->
-        <div class="progressBar" id="progressBar">
-                <div class="progressFill" id="progressFill"></div>
-        </div>
-	<div class="controls">
-		<button id="playPauseBtn">▶️</button>
-		<div id="trackTime" style="margin: 8px 0; font-weight: bold;">
-    		⏱️ <span id="currentTime">00:00</span> / <span id="duration">00:00</span>
-		</div>
-	</div>
 
-	<audio id="audioPlayer">
-    	Votre navigateur ne supporte pas l'élément audio.
-	</audio>
-</div>
-<div id="playlist">
-    <?php foreach ($tracks as $index => $track): ?>
-        <div class="track" data-src="<?= htmlspecialchars($track['file']) ?>" 
-		data-index="<?= $index ?>" data-cover="<?= $track['cover'] ?>" 
-		data-artist="<?= htmlspecialchars($track['artist']) ?>" 
-		data-album="<?= htmlspecialchars($track['album']) ?>" 
-		data-title="<?= htmlspecialchars($track['title']) ?>">
-            <?php if ($track['cover']): ?>
-                <img class="cover" src="<?= $track['cover'] ?>" alt="Cover">
-            <?php else: ?>
-                <div class="cover" style="background:#ccc;"></div>
-            <?php endif; ?>
-            <div class="info">
-                <strong><?= $track['title'] ?></strong>
-                <small><?= $track['artist'] ?></small>
-		<small><?= '<i>('.$track['album'].')</i>' ?></small>
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4.5" width="4" height="15" rx="1.2"/><rect x="14" y="4.5" width="4" height="15" rx="1.2"/></symbol>
+    <symbol id="i-prev" viewBox="0 0 24 24"><rect x="4" y="5" width="2.6" height="14" rx="1"/><path d="M19.5 5.9v12.2a1 1 0 0 1-1.53.85L9.2 13.05a1.2 1.2 0 0 1 0-2.1l8.77-5.9a1 1 0 0 1 1.53.85z"/></symbol>
+    <symbol id="i-next" viewBox="0 0 24 24"><rect x="17.4" y="5" width="2.6" height="14" rx="1"/><path d="M4.5 5.9v12.2a1 1 0 0 0 1.53.85l8.77-5.9a1.2 1.2 0 0 0 0-2.1L6.03 5.05A1 1 0 0 0 4.5 5.9z"/></symbol>
+    <symbol id="i-shuffle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></symbol>
+    <symbol id="i-repeat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></symbol>
+    <symbol id="i-vol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z" fill="currentColor"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></symbol>
+    <symbol id="i-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z" fill="currentColor"/><path d="m22 9-6 6M16 9l6 6"/></symbol>
+    <symbol id="i-note" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+</svg>
+
+<div class="app">
+
+    <!-- ===== Player (toujours visible) ===== -->
+    <section class="player" id="player" aria-label="Lecteur">
+        <h1 class="player-title"><?= h($player_title) ?></h1>
+
+        <div class="now">
+            <div class="now-cover" id="nowCover">
+                <svg class="ph" aria-hidden="true"><use href="#i-note"/></svg>
+            </div>
+            <div class="now-meta" aria-live="polite">
+                <div class="now-title" id="nowTitle"><?= $tracks ? 'Choisissez une piste' : 'Aucune piste' ?></div>
+                <div class="now-artist" id="nowArtist"></div>
+                <div class="now-album" id="nowAlbum"></div>
             </div>
         </div>
-    <?php endforeach; ?>
+
+        <div class="seek">
+            <input type="range" id="seek" min="0" max="0" step="0.1" value="0" aria-label="Position de lecture">
+            <div class="times"><span id="curTime">0:00</span><span id="durTime">0:00</span></div>
+        </div>
+
+        <div class="controls">
+            <button type="button" class="btn btn-sm" id="shuffleBtn" title="Lecture aléatoire" aria-pressed="false">
+                <svg><use href="#i-shuffle"/></svg>
+            </button>
+            <button type="button" class="btn" id="prevBtn" title="Précédent (P)"><svg><use href="#i-prev"/></svg></button>
+            <button type="button" class="btn btn-play" id="playBtn" title="Lecture / Pause (Espace)" aria-label="Lecture">
+                <svg><use href="#i-play"/></svg>
+            </button>
+            <button type="button" class="btn" id="nextBtn" title="Suivant (N)"><svg><use href="#i-next"/></svg></button>
+            <button type="button" class="btn btn-sm" id="repeatBtn" title="Répéter : non" data-mode="off">
+                <svg><use href="#i-repeat"/></svg><span class="badge">1</span>
+            </button>
+        </div>
+
+        <div class="volume">
+            <button type="button" class="btn btn-sm" id="muteBtn" title="Muet (M)"><svg><use href="#i-vol"/></svg></button>
+            <input type="range" id="volume" min="0" max="1" step="0.01" value="1" aria-label="Volume">
+        </div>
+
+        <audio id="audio" preload="metadata"></audio>
+    </section>
+
+    <!-- ===== Playlist (défile séparément) ===== -->
+    <section class="list" aria-label="Playlist">
+        <div class="list-head">
+            <label class="search">
+                <svg aria-hidden="true"><use href="#i-search"/></svg>
+                <input type="search" id="filter" placeholder="Rechercher un titre, un artiste, un album…" autocomplete="off">
+            </label>
+            <div class="list-info" id="listInfo">
+                <?= count($tracks) ?> piste<?= count($tracks) > 1 ? 's' : '' ?> · <?= fmt_time($total) ?>
+            </div>
+        </div>
+
+        <ol class="playlist" id="playlist">
+            <?php foreach ($tracks as $i => $t): ?>
+            <li class="track" data-i="<?= $i ?>">
+                <button type="button" class="track-btn">
+                    <span class="track-cover">
+                        <?php if ($t['cover']): ?>
+                            <img src="<?= h($t['cover']) ?>" alt="" loading="lazy" decoding="async" width="56" height="56">
+                        <?php else: ?>
+                            <svg class="ph" aria-hidden="true"><use href="#i-note"/></svg>
+                        <?php endif; ?>
+                        <span class="eq" aria-hidden="true"><i></i><i></i><i></i></span>
+                    </span>
+                    <span class="track-info">
+                        <strong><?= h($t['title']) ?></strong>
+                        <small><?= h($t['artist'] ?: 'Artiste non renseigné') ?><?= $t['album'] !== '' ? ' · <em>' . h($t['album']) . '</em>' : '' ?></small>
+                    </span>
+                    <span class="track-dur"><?= $t['duration'] ? fmt_time($t['duration']) : '' ?></span>
+                </button>
+            </li>
+            <?php endforeach; ?>
+        </ol>
+
+        <?php if (!$tracks): ?>
+            <p class="empty">Aucun fichier audio trouvé dans <code><?= h($cfg['audio_dir']) ?></code>.</p>
+        <?php endif; ?>
+        <p class="empty" id="noMatch" hidden>Aucun résultat.</p>
+    </section>
 </div>
 
-<script>
-    const player = document.getElementById('audioPlayer');
-    const tracks = document.querySelectorAll('.track');
-    const playPauseBtn = document.getElementById('playPauseBtn');
-    let current = 0;
-
-    function playTrack(index) {
-        tracks.forEach(t => t.classList.remove('active'));
-        const track = tracks[index];
-        track.classList.add('active');
-        player.src = track.getAttribute('data-src');
-	trackcover.innerHTML = "<img class='cover-player' src='" + track.getAttribute('data-cover') + "'>";
-	trackinfo.innerHTML = track.getAttribute('data-artist') + " - " + track.getAttribute('data-title') + "<br />" + "<i>(" + track.getAttribute('data-album') + ")</div>";
-	player.play();
-        current = index;
-    }
-
-    tracks.forEach((track, index) => {
-        track.addEventListener('click', () => playTrack(index));
-    });
-
-    if (tracks.length > 0) {
-        playTrack(0);
-    }
-
-    player.addEventListener('ended', () => {
-        let next = current + 1;
-        if (next < tracks.length) {
-            playTrack(next);
-        }
-    });
-
-
-// Timing
-    const currentTimeEl = document.getElementById('currentTime');
-    const durationEl = document.getElementById('duration');
-    const progressBar = document.getElementById('progressBar');
-    const progressFill = document.getElementById('progressFill');
-    let playing = false;
-
-    function formatTime(seconds) {
-        const m = Math.floor(seconds / 60);
-        const s = Math.floor(seconds % 60);
-        return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-    }
-    function updateProgress() {
-        const percent = (player.currentTime / player.duration) * 100;
-        progressFill.style.width = percent + '%';
-        currentTimeEl.textContent = formatTime(player.currentTime);
-    }
-    // Click pour avancer
-    progressBar.addEventListener('click', e => {
-        const rect = progressBar.getBoundingClientRect();
-        const percent = (e.clientX - rect.left) / rect.width;
-        player.currentTime = percent * player.duration;
-    });
-
-    // Met à jour la durée une fois que les métadonnées sont chargées
-    player.addEventListener('loadedmetadata', () => {
-        durationEl.textContent = formatTime(player.duration);
-        currentTimeEl.textContent = formatTime(player.currentTime);
-    });
-
-    // Met à jour le temps courant pendant la lecture
-    player.addEventListener('timeupdate', updateProgress);
-    //player.addEventListener('timeupdate', () => {
-    //    currentTimeEl.textContent = formatTime(player.currentTime);
-    //});
-
-    // Remet à zéro si on change de piste
-    player.addEventListener('emptied', () => {
-        durationEl.textContent = "00:00";
-        currentTimeEl.textContent = "00:00";
-    });
-
-    // Controls
-    playPauseBtn.addEventListener('click', () => {
-        if (player.src === "") {
-            alert("Aucune piste chargée.");
-            return;
-        }
-
-        if (player.paused) {
-            player.play();
-        } else {
-            player.pause();
-        }
-    });
-    player.addEventListener('play', () => {
-        playPauseBtn.textContent = '⏸️';
-        playing = true;
-    });
-
-    player.addEventListener('pause', () => {
-        playPauseBtn.textContent = '▶️';
-        playing = false;
-    });
-</script>
-
+<script type="application/json" id="tracks-data"><?= $json ?></script>
 </body>
 </html>

@@ -1,0 +1,10 @@
+# Les pochettes restent accessibles, le fichier de cache JSON non.
+<FilesMatch "\.(json|tmp)$">
+    Require all denied
+</FilesMatch>
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType image/jpeg "access plus 1 month"
+    ExpiresByType image/png  "access plus 1 month"
+    ExpiresByType image/webp "access plus 1 month"
+</IfModule>
